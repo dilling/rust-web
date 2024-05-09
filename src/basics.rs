@@ -107,7 +107,6 @@ fn merge_routers<S: Clone + Send + Sync + 'static>(left: Router<S>, right: Route
 /// routes under the `/users` path prefix of the specified router.
 ///
 fn nest_router<S: Clone + Send + Sync + 'static>(router: Router<S>) -> Router<S> {
-
     let user_routes = Router::<S>::new()
         .route("/", get(handler))
         .route("/:id", get(handler))
@@ -136,12 +135,16 @@ async fn test_routes() {
     /// for ServiceExt::oneshot
     use tower::util::ServiceExt;
 
-    let _app = Router::new().route("/users", get(identity_handler));
+    let app = Router::new().route("/users", get(identity_handler));
 
-    let _req: Request<Body> = todo!("Use Request::builder");
+    let req: Request<Body> = Request::builder()
+        .method(Method::GET)
+        .uri("/users")
+        .body(Body::empty())
+        .unwrap();
 
-    let response = _app.oneshot(_req).await.unwrap();
-
+    let response = app.oneshot(req).await.unwrap();
+    
     let body = response.into_body().collect().await.unwrap().to_bytes();
 
     let body_as_string = String::from_utf8(body.to_vec()).unwrap();
