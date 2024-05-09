@@ -612,9 +612,9 @@ impl <S> FromRequestParts<S> for FullPath {
 
 }
 
-async fn handler_trait_handler(FullPath { path }: FullPath) -> Person {
+async fn handler_trait_handler(FullPath { path: _path }: FullPath) -> Person {
     Person {
-        name: path,
+        name: "John Doe".to_string(),
     }
 }
 
