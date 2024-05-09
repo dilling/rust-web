@@ -19,11 +19,15 @@
 //! and interact with paths in a route definition.
 //!
 
+use core::str;
+use std::collections::HashMap;
+
+use axum::{extract::{FromRequestParts, Path, Query}, http::request::Parts, response::{IntoResponse, Response}, Json};
 #[allow(unused_imports)]
 use axum::{body::Body, http::Method, routing::*};
 #[allow(unused_imports)]
 use http_body_util::BodyExt;
-use hyper::Request;
+use hyper::{Request, StatusCode};
 
 ///
 /// EXERCISE 1
@@ -149,7 +153,10 @@ async fn bytes_handler(bytes: hyper::body::Bytes) -> hyper::body::Bytes {
 /// the `serde::Deserialize` trait. Create a `Person` data structure with a single field
 /// `name` of type `String` and implement `serde::Deserialize` for it. Then, modify the
 /// handler `json_handler` to return the name of the person.
-///
+#[derive(serde::Deserialize, serde::Serialize, Clone)]
+struct Person {
+    name: String,
+}
 #[tokio::test]
 async fn json_handler_test() {
     // for Body::collect
@@ -177,8 +184,8 @@ async fn json_handler_test() {
 
     assert_eq!(body_as_string, "John Doe");
 }
-async fn json_handler() -> String {
-    todo!("Return the name of the person")
+async fn json_handler(Json(person): axum::Json<Person>) -> String {
+    person.name
 }
 
 ///
@@ -200,7 +207,7 @@ async fn path_handler_test() {
     /// for ServiceExt::oneshot
     use tower::util::ServiceExt;
 
-    let app = Router::<()>::new().route("/users/jdoe", get(path_handler));
+    let app = Router::<()>::new().route("/users/:name", get(path_handler));
 
     let response = app
         .oneshot(
@@ -219,8 +226,8 @@ async fn path_handler_test() {
 
     assert_eq!(body_as_string, "jdoe");
 }
-async fn path_handler(axum::extract::Path(_name): axum::extract::Path<String>) -> String {
-    todo!("Return the name of the person")
+async fn path_handler(Path(name): Path<String>) -> String {
+    name
 }
 
 ///
@@ -263,12 +270,9 @@ async fn path2_handler_test() {
     assert_eq!(body_as_string, "jdoe:1");
 }
 async fn path2_handler(
-    axum::extract::Path(mut name): axum::extract::Path<String>,
-    axum::extract::Path(post_id): axum::extract::Path<u32>,
+    Path((name, post_id)): Path<(String, u32)>,
 ) -> String {
-    name.push_str(":");
-    name.push_str(&post_id.to_string());
-    name
+    format!("{}:{}", name, post_id)
 }
 
 ///
@@ -310,8 +314,13 @@ async fn query_handler_test() {
 
     assert_eq!(body_as_string, "name=jdoe&age=42");
 }
-async fn query_handler() -> String {
-    todo!("Return the query parameters formatted into a query string")
+
+async fn query_handler(query: Query<HashMap<String, String>>) -> String {
+    query
+        .iter()
+        .map(|(k, v)| format!("{}={}", k, v))
+        .collect::<Vec<String>>()
+        .join("&")
 }
 
 ///
@@ -349,8 +358,11 @@ async fn header_handler_test() {
 
     assert_eq!(body_as_string, "application/json");
 }
-async fn header_handler(_headers: axum::http::HeaderMap) -> String {
-    todo!("Return the Content-Type header")
+async fn header_handler(headers: axum::http::HeaderMap) -> Result<String, String> {
+    let x = headers.get("Content-Type").ok_or("Content-Type header not found")?;
+    x.to_str()
+        .map_err(|e| e.to_string())
+        .map(|s| s.to_string())
 }
 
 ///
@@ -388,8 +400,14 @@ async fn multiple_handler_test() {
 
     assert_eq!(body_as_string, "jdoe:10");
 }
-async fn multiple_handler() -> String {
-    todo!("Return the limit query parameter and the name path segment variable, joined together by the character `:`")
+
+async fn multiple_handler(
+    Path(name): Path<String>,
+    Query(query): Query<HashMap<String, String>>,
+) -> Result<String, String> {
+    let limit = query.get("limit").ok_or("No limit found".to_string())?;
+    let response = format!("{}:{}", name, limit);
+    Ok(response)
 }
 
 ///
@@ -437,7 +455,11 @@ async fn response_handler() -> hyper::Response<Body> {
     #![allow(unused_imports)]
     use hyper::Response;
 
-    todo!("Return a response with a status code of 200 and a content type of `text/plain`")
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "text/plain")
+        .body(Body::from("Hello, world!"))
+        .unwrap()
 }
 
 ///
@@ -476,7 +498,7 @@ async fn body_handler_test() {
     assert_eq!(body_as_string, "Hello, world!");
 }
 async fn body_handler() -> Body {
-    todo!("Return a body with the static string `Hello, world!`")
+    Body::from("Hello, world!")
 }
 
 ///
@@ -515,8 +537,10 @@ async fn json_response_handler_test() {
 
     assert_eq!(body_as_string, r#"{"name":"John Doe"}"#);
 }
-async fn json_response_handler() -> axum::Json<()> {
-    todo!("Return a Json<Person> value with name equal to `John Doe`")
+async fn json_response_handler() -> axum::Json<Person> {
+    Json(Person {
+        name: "John Doe".to_string(),
+    })
 }
 
 ///
@@ -563,8 +587,35 @@ async fn handler_trait_test() {
 
     assert_eq!(body_as_string, r#"{"name":"John Doe"}"#);
 }
-async fn handler_trait_handler() -> () {
-    todo!("Return a custom data type for which you provide an implementation of IntoResponse")
+
+impl IntoResponse for Person {
+    fn into_response(self) -> Response {
+        let body = serde_json::to_string(&self).unwrap();
+        Response::builder()
+            .header("Content-Type", "application/json")
+            .body(Body::from(body))
+            .unwrap()
+    
+    }
+}
+
+struct FullPath {
+    path: String,
+}
+#[axum::async_trait]
+impl <S> FromRequestParts<S> for FullPath {
+    type Rejection = std::convert::Infallible;
+    
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        Ok(FullPath{ path: parts.uri.path().to_string() })
+    }
+
+}
+
+async fn handler_trait_handler(FullPath { path }: FullPath) -> Person {
+    Person {
+        name: path,
+    }
 }
 
 ///
@@ -603,8 +654,8 @@ async fn result_handler_test() {
 
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
 }
-async fn result_handler() -> () {
-    todo!("Return a Result<String, ()> to start")
+async fn result_handler() -> Result<String, StatusCode> {
+    Err(StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 ///
