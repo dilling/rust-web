@@ -57,7 +57,7 @@ pub async fn hello_world() {
 /// and that it properly serves the static HTML.
 ///
 async fn handler() -> Html<&'static str> {
-    Html("<h1>Hello World!</h1>")
+    Html("<h1>Hello, World!</h1>")
 }
 
 ///
@@ -129,7 +129,7 @@ fn nest_router<S: Clone + Send + Sync + 'static>(router: Router<S>) -> Router<S>
 /// for what reasons.
 ///
 #[tokio::test]
-async fn test_routes() {
+async fn test_routes() -> Result<(), String> {
     // for Body::collect
     use http_body_util::BodyExt;
     /// for ServiceExt::oneshot
@@ -143,13 +143,15 @@ async fn test_routes() {
         .body(Body::empty())
         .unwrap();
 
-    let response = app.oneshot(req).await.unwrap();
+    let response = app.oneshot(req).await.map_err(|e| e.to_string())?;
     
-    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body = response.into_body().collect().await.map_err(|e| e.to_string())?.to_bytes();
 
-    let body_as_string = String::from_utf8(body.to_vec()).unwrap();
+    let body_as_string = String::from_utf8(body.to_vec()).map_err(|e| e.to_string())?;
 
     assert_eq!(body_as_string, "/users");
+
+    Ok(())
 }
 
 ///
@@ -188,8 +190,11 @@ async fn test_basic_json() {
 
     todo!("assert_eq");
 }
-async fn return_json_hello_world() -> Json<String> {
-    Json(todo!("Return a JSON response here!"))
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy)]
+struct Dummy {}
+async fn return_json_hello_world() -> Json<Dummy> {
+    Json(Dummy {})
 }
 
 async fn identity_handler(request: Request<Body>) -> Body {

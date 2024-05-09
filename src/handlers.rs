@@ -65,8 +65,9 @@ async fn basic_request_handler_test() {
 
     assert_eq!(body_as_string, "<h1>Hello!</h1>");
 }
-async fn basic_request_handler(_request: Request<Body>) -> String {
-    todo!("Return the body, as a string")
+async fn basic_request_handler(request: Request<Body>) -> String {
+    let body = request.into_body().collect().await.unwrap().to_bytes().to_vec();
+    String::from_utf8(body).unwrap()
 }
 
 ///
