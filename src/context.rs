@@ -24,7 +24,7 @@ use std::sync::Arc;
 
 #[allow(unused_imports)]
 use axum::extract::State;
-use axum::{extract::Path, response::Html, Json};
+use axum::extract::Path;
 #[allow(unused_imports)]
 use axum::{body::Body, http::Method, routing::*};
 #[allow(unused_imports)]

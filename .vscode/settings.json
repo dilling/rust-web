@@ -1,5 +1,9 @@
 {
     "cSpell.words": [
         "jdoe"
-    ]
+    ],
+    "rust-analyzer.cargo.extraEnv": {
+        "DATABASE_URL": "postgres://postgres:abc123@localhost:5432/postgres"
+    }
+    
 }

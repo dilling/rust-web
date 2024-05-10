@@ -66,15 +66,16 @@ async fn query_playground() {
 ///
 #[tokio::test]
 async fn select_one_plus_one() {
-    let _pool = PgPoolOptions::new()
+    let pool = PgPoolOptions::new()
         .max_connections(1)
         .connect(&std::env::var("DATABASE_URL").unwrap())
         .await
         .unwrap();
 
-    let _sum: i32 = todo!("Insert row here");
+    let sum: i32 = sqlx::query!("SELECT 1 + 1 AS sum")
+        .fetch_one(&pool).await.unwrap().sum.unwrap();
 
-    assert_eq!(_sum, 2);
+    assert_eq!(sum, 2);
 }
 
 ///
@@ -90,13 +91,18 @@ async fn select_one_plus_one() {
 ///
 #[tokio::test]
 async fn select_star() {
-    let _pool = PgPoolOptions::new()
+    let pool = PgPoolOptions::new()
         .max_connections(1)
         .connect(&std::env::var("DATABASE_URL").unwrap())
         .await
         .unwrap();
 
-    todo!("Insert query here");
+    let todos = sqlx::query!("SELECT * from todos")
+        .fetch_all(&pool).await.unwrap();
+
+    for todo in todos {
+        println!("{:?}", todo);
+    }
 
     assert!(true);
 }
@@ -127,7 +133,16 @@ async fn insert_todo() {
     let _description = "I should really learn SQLx for my Axum web app";
     let _done = false;
 
-    assert!(true);
+    let query = sqlx::query!(
+        "INSERT INTO todos (title, description, done) VALUES ($1, $2, $3) RETURNING id",
+        _title,
+        _description,
+        _done
+    );
+
+    let id = query.fetch_one(&_pool).await.unwrap().id;
+
+    assert!(id > 0);
 }
 
 ///
