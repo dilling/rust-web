@@ -14,13 +14,12 @@
 //! nicely into your Axum web applications.
 //!
 
+use std::sync::Arc;
+
 use axum::{
-    body::Body,
-    http::{Method, Request},
-    response::Html,
-    routing::*,
-    Json, Router,
+    body::Body, extract::State, http::{Method, Request}, response::Html, routing::*, Json, Router
 };
+use reqwest::Client;
 
 ///
 /// EXERCISE 1
@@ -39,7 +38,11 @@ use axum::{
 ///
 ///
 pub async fn cat_fact_server() {
-    let app = Router::<()>::new().route("/", get(cat_fact_handler));
+    let client = reqwest::Client::new();
+
+    let app = Router::<Client>::new()
+        .route("/", get(cat_fact_handler))
+        .with_state(client);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
         .await
@@ -49,8 +52,18 @@ pub async fn cat_fact_server() {
 
     axum::serve(listener, app).await.unwrap();
 }
-async fn cat_fact_handler() -> Html<String> {
-    todo!("Using reqwest::get and .json, get a random cat fact from https://catfact.ninja/fact and return it as an HTML response.")
+async fn cat_fact_handler(
+    State(client): State<Client>,
+) -> Html<String> {
+    let response = client.get("https://catfact.ninja/fact")
+        .send()
+        .await
+        .unwrap()
+        .json::<CatFact>()
+        .await
+        .unwrap();
+
+    Html(format!("<h1>{}</h1>", response.fact))
 }
 #[derive(serde::Deserialize)]
 struct CatFact {
@@ -94,10 +107,10 @@ struct CatFact {
 /// set the body of a request using the `.body` method.`
 ///
 async fn posts_server() {
-    let app = Router::<()>::new();
+    let client = Arc::new(Client::new());
 
-    let _client = reqwest::Client::new();
-
+    let app = Router::<Arc<Client>>::new().with_state(client);
+    
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
         .await
         .unwrap();

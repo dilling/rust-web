@@ -24,6 +24,7 @@ use std::sync::Arc;
 
 #[allow(unused_imports)]
 use axum::extract::State;
+use axum::{extract::Path, response::Html, Json};
 #[allow(unused_imports)]
 use axum::{body::Body, http::Method, routing::*};
 #[allow(unused_imports)]
@@ -215,13 +216,24 @@ async fn mutable_state_shared_context() {
 
     let gbp_to_usd_rate = Arc::new(Mutex::new(1.3));
 
-    let _app = Router::new()
+    let app = Router::new()
         .route("/usd_to_gbp", get(mutable_usd_to_gbp_handler))
         .route("/gbp_to_usd", get(mutable_gbp_to_usd_handler))
-        .route("/set_exchange_rate", get(set_exchange_rate_handler))
+        .route("/set_exchange_rate", post(set_exchange_rate_handler))
         .with_state(gbp_to_usd_rate);
 
-    let response = _app
+    app.clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/set_exchange_rate")
+                .body(Body::from("2"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let response = app
         .oneshot(
             Request::builder()
                 .method(Method::GET)
@@ -236,7 +248,7 @@ async fn mutable_state_shared_context() {
 
     let _body_as_string = String::from_utf8(body.to_vec()).unwrap();
 
-    assert_eq!(_body_as_string, "130");
+    assert_eq!(_body_as_string, "200");
 }
 async fn mutable_usd_to_gbp_handler(State(rate): State<Arc<Mutex<f64>>>, body: String) -> String {
     let guard = rate.lock().await;
@@ -422,6 +434,98 @@ async fn extension_gbp_to_usd_handler() -> String {
 ///
 /// Place it into a web server and test to ensure it meets your requirements.
 ///
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
+struct User {
+    id: u64,
+    name: String,
+    email: String,
+}
+#[derive(Clone, Debug, serde::Serialize)]
+struct UserState {
+    users: Vec<User>
+}
+
+struct UserDTO {
+    name: String,
+    email: String,
+}
+
 async fn run_users_server() {
-    todo!("Implement the users API")
+    let state = Arc::new(Mutex::new(UserState {
+        users: vec![]
+    }));
+    
+
+    let user_routes = Router::new()
+        // .route("/", get(get_users))
+        // .route("/:id", get(get_user))
+        // .route("/", post(create_user))
+        // .route("/:id", put(update_user))
+        // .route("/:id", delete(delete_user))
+        .with_state(state);
+
+    let app = Router::new()
+        .nest("/user/", user_routes);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
+        .await
+        .unwrap();
+
+    println!("Listening on {}", listener.local_addr().unwrap());
+
+    axum::serve(listener, app).await.unwrap();
+}
+
+async fn get_users(state: State<Arc<Mutex<UserState>>>) -> Vec<User> {
+    state.lock().await.users.clone()
+}
+
+async fn get_user(
+    state: State<Arc<Mutex<UserState>>>,
+    Path(id): Path<u64>
+) -> Option<User> {
+    let users = &state.lock().await.users;
+    users.iter().find(|user| user.id == id).cloned()
+}
+
+async fn create_user(
+    state: State<Arc<Mutex<UserState>>>,
+    body: UserDTO
+) -> User {
+    let mut guard = state.lock().await;
+    let user = User {
+        id: 1,
+        name: body.name,
+        email: body.email
+    };
+    guard.users.push(user.clone());
+    user
+}
+
+async fn update_user(
+    state: State<Arc<Mutex<UserState>>>,
+    Path(id): Path<u64>,
+    body: UserDTO
+) -> Option<User> {
+    let mut guard = state.lock().await;
+    let idx = guard.users.iter().position(|user| user.id == id)?;
+    let user = guard.users.get(idx)?;
+    let new_user = User {
+        id: user.id,
+        name: body.name,
+        email: body.email
+    };
+    guard.users[idx] = new_user.clone();
+    Some(new_user)
+}
+
+async fn delete_user(
+    state: State<Arc<Mutex<UserState>>>,
+    Path(id): Path<u64>,
+) -> Option<()> {
+    let mut guard = state.lock().await;
+    let idx = guard.users.iter().position(|user| user.id == id)?;
+    guard.users.remove(idx);
+    Some(())
 }

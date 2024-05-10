@@ -672,5 +672,10 @@ async fn result_handler() -> Result<String, StatusCode> {
 /// Place it into a web server and test to ensure it meets your requirements.
 ///
 async fn run_users_server() {
+    
     todo!("Implement the users API")
 }
+
+// async fn handler() -> Html<&'static str> {
+//     Html("<h1>Hello, World!</h1>")
+// }
