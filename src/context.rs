@@ -19,6 +19,7 @@
 //! In this section, you will explore these mechanisms.
 //!
 
+
 #[allow(unused_imports)]
 use axum::extract::State;
 #[allow(unused_imports)]
@@ -42,11 +43,11 @@ async fn closure_shared_context() {
     /// for ServiceExt::oneshot
     use tower::util::ServiceExt;
 
-    let _gbp_to_usd_rate = 1.3;
+    let gbp_to_usd_rate = 1.3;
 
     let _app = Router::<()>::new()
-        .route("/usd_to_gbp", get(todo!("Make a closure")))
-        .route("/gbp_to_usd", get(todo!("Make a closure")));
+        .route("/usd_to_gbp", get(move |usd: String| async move {convert_gbp_to_usd(usd, gbp_to_usd_rate)}))
+        .route("/gbp_to_usd", get(move |gdp: String| async move {convert_usd_to_gbp(gdp, gbp_to_usd_rate)}));
 
     let response = _app
         .oneshot(
@@ -99,17 +100,27 @@ async fn shared_mutable_context() {
     use http_body_util::BodyExt;
     /// for ServiceExt::oneshot
     use tower::util::ServiceExt;
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
 
-    let _gbp_to_usd_rate = 1.3;
+    let gbp_to_usd_rate = 1.3;
+    let arc1 = Arc::new(Mutex::new(gbp_to_usd_rate));
+    let arc2 = arc1.clone();
 
     let _app = Router::<()>::new()
         .route(
             "/usd_to_gbp",
-            get(move |usd: String| async move { convert_usd_to_gbp(usd, _gbp_to_usd_rate) }),
+            get(move |usd: String| async move { 
+                let guard = arc1.lock().await;
+                convert_usd_to_gbp(usd, *guard) 
+            }),
         )
         .route(
             "/gbp_to_usd",
-            get(move |gbp: String| async move { convert_gbp_to_usd(gbp, _gbp_to_usd_rate) }),
+            get(move |gbp: String| async move { 
+                let guard = arc2.lock().await;
+                convert_gbp_to_usd(gbp, *guard) 
+            }),
         );
 
     let response = _app
@@ -155,9 +166,9 @@ async fn state_shared_context() {
     let _gbp_to_usd_rate = 1.3;
 
     let _app = Router::new()
-        .route("/usd_to_gbp", get(usd_to_gbp_handler))
+        .route("/usd_to_gbp",  get(usd_to_gbp_handler))
         .route("/gbp_to_usd", get(gbp_to_usd_handler))
-        .with_state(());
+        .with_state(_gbp_to_usd_rate);
 
     let response = _app
         .oneshot(
@@ -176,11 +187,11 @@ async fn state_shared_context() {
 
     assert_eq!(_body_as_string, "130");
 }
-async fn usd_to_gbp_handler() -> String {
-    todo!("Use State to access the exchange rate")
+async fn usd_to_gbp_handler(State(gbp_to_usd_rate): axum::extract::State<f64>, usd: String) -> String {
+    format!("{}", usd.parse::<f64>().unwrap() * gbp_to_usd_rate)
 }
-async fn gbp_to_usd_handler() -> String {
-    todo!("Use State to access the exchange rate")
+async fn gbp_to_usd_handler(State(gbp_to_usd_rate): axum::extract::State<f64>, gbp: String) -> String {
+    format!("{}", gbp.parse::<f64>().unwrap() / gbp_to_usd_rate)
 }
 
 ///
