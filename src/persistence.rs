@@ -266,16 +266,16 @@ pub async fn run_todo_app() {
 
     let todo_state = TodoState { repo: TodoRepoPostgres { pool } };
 
-    let todo_routes: Router<TodoState<TodoRepoPostgres>> = Router::new()
+    let todo_routes = Router::new()
         .route("/", get(get_todos))
         .route("/:id", get(get_todo))
         .route("/", post(create_todo))
         .route("/:id", put(update_todo))
-        .route("/:id", delete(delete_todo));
+        .route("/:id", delete(delete_todo))
+        .with_state(todo_state);
 
     let app = Router::new()
-        .nest("/todo/", todo_routes)
-        .with_state(todo_state);
+        .nest("/todo/", todo_routes);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
         .await
