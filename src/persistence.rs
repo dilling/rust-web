@@ -33,7 +33,7 @@
 //! 4. Run `sqlx migrate run` to run the migrations in the `migrations` folder.
 //!
 
-use axum::{extract::{Path, State}, routing::{delete, get, post, put}, Json, Router};
+use axum::{async_trait, extract::{Path, State}, routing::{delete, get, post, put}, Json, Router};
 use serde::de;
 use sqlx::{pool, postgres::PgPoolOptions, types::time::PrimitiveDateTime, Pool, Postgres};
 
@@ -264,9 +264,9 @@ pub async fn run_todo_app() {
         .await
         .unwrap();
 
-    let todo_state = TodoState { pool };
+    let todo_state = TodoState { repo: TodoRepoPostgres { pool } };
 
-    let todo_routes: Router<TodoState> = Router::new()
+    let todo_routes: Router<TodoState<TodoRepoPostgres>> = Router::new()
         .route("/", get(get_todos))
         .route("/:id", get(get_todo))
         .route("/", post(create_todo))
@@ -287,25 +287,90 @@ pub async fn run_todo_app() {
 }
 
 #[derive(Clone)]
-struct TodoState {
+struct TodoState<R: TodoRepo> {
+    repo: R
+}
+
+#[async_trait]
+trait TodoRepo: Send + Sync {
+    async fn get_todos(&self) -> Vec<Todo>;
+    async fn get_todo(&self, id: i64) -> Option<Todo>;
+    async fn create_todo(&self, title: &str, description: &str) -> i64;
+    async fn update_todo(
+        &self,
+        id: i64,
+        title: Option<&str>,
+        description: Option<&str>,
+        done: Option<bool>,
+    ) -> Option<i64>;
+    async fn delete_todo(&self, id: i64) -> i64;
+
+}
+
+#[derive(Clone)]
+struct TodoRepoPostgres {
     pool: Pool<Postgres>,
 }
 
-async fn get_todos(
-    State(TodoState{ pool }): State<TodoState>,
+#[async_trait]
+impl TodoRepo for TodoRepoPostgres {
+    async fn get_todos(&self) -> Vec<Todo> {
+        let query = sqlx::query_as!(Todo, "SELECT * from todos");
+        query.fetch_all(&self.pool).await.unwrap()
+    }
+    async fn get_todo(&self, id: i64) -> Option<Todo> {
+        let query = sqlx::query_as!(Todo, "SELECT * from todos where id = $1", id);
+        query.fetch_optional(&self.pool).await.unwrap()
+    }
+    async fn create_todo(&self, title: &str, description: &str) -> i64 {
+        let query = sqlx::query!(
+            "INSERT INTO todos (title, description, done) VALUES ($1, $2, $3) RETURNING id",
+            title,
+            description,
+            false
+        );
+        query.fetch_one(&self.pool).await.unwrap().id
+    }
+    async fn update_todo(
+        &self,
+        id: i64,
+        title: Option<&str>,
+        description: Option<&str>,
+        done: Option<bool>,
+    ) -> Option<i64> {
+        let query = sqlx::query!(
+            "UPDATE todos SET title = COALESCE($1, title), description = COALESCE($2, description), done = COALESCE($3, done) where id = $4 RETURNING id",
+            title,
+            description,
+            done,
+            id
+        );
+    
+        query.fetch_optional(&self.pool).await.unwrap().map(|row| row.id)
+    }
+    async fn delete_todo(&self, id: i64) -> i64 {
+        let query = sqlx::query!(
+            "DELETE FROM todos where id = $1 RETURNING id",
+            id
+        );
+    
+        query.fetch_one(&self.pool).await.unwrap().id
+    }
+}
+
+async fn get_todos<R: TodoRepo>(
+    State(TodoState{ repo }): State<TodoState<R>>,
 ) -> Json<Vec<TodoDTO>> {
-    let query = sqlx::query_as!(Todo, "SELECT * from todos");
-    let todos =  query.fetch_all(&pool).await.unwrap();
+    let todos =  repo.get_todos().await;
     Json(todos.into_iter().map(|todo| todo.to_dto()).collect())
 }
 
-async fn get_todo(
+async fn get_todo<R: TodoRepo>(
     Path(id): Path<i64>,
-    State(TodoState{ pool }): State<TodoState>,
-) -> Json<TodoDTO> {
-    let query = sqlx::query_as!(Todo, "SELECT * from todos where id = $1", id);
-    let todo = query.fetch_one(&pool).await.unwrap();
-    Json(todo.to_dto())
+    State(TodoState{ repo }): State<TodoState<R>>,
+) -> Json<Option<TodoDTO>> {
+    let maybe_todo = repo.get_todo(id).await;
+    Json(maybe_todo.map(|todo| todo.to_dto()))
 }
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
@@ -314,17 +379,11 @@ struct CreateTodo {
     description: String,
 }
 
-async fn create_todo(
-    State(TodoState{ pool }): State<TodoState>,
+async fn create_todo<R: TodoRepo>(
+    State(TodoState{ repo }): State<TodoState<R>>,
     body: Json<CreateTodo>
 ) -> Json<i64> {
-    let query = sqlx::query!(
-        "INSERT INTO todos (title, description, done) VALUES ($1, $2, $3) RETURNING id",
-        body.title,
-        body.description,
-        false
-    );
-    let id = query.fetch_one(&pool).await.unwrap().id;
+    let id = repo.create_todo(&body.title, &body.description).await;
     Json(id)
 }
 
@@ -335,32 +394,19 @@ struct UpdateTodo {
     done: Option<bool>,
 }
 
-async fn update_todo(
+async fn update_todo<R: TodoRepo>(
     Path(id): Path<i64>,
-    State(TodoState{ pool }): State<TodoState>,
-    body: Json<UpdateTodo>
+    State(TodoState{ repo }): State<TodoState<R>>,
+    Json(UpdateTodo{ title, description, done }): Json<UpdateTodo>
 ) -> Json<Option<i64>> {
-    let query = sqlx::query!(
-        "UPDATE todos SET title = COALESCE($1, title), description = COALESCE($2, description), done = COALESCE($3, done) where id = $4 RETURNING id",
-        body.title,
-        body.description,
-        body.done,
-        id
-    );
-
-    let maybe_id = query.fetch_optional(&pool).await.unwrap().map(|row| row.id);
-    Json(maybe_id)
+    let id = repo.update_todo(id, title.as_deref(), description.as_deref(), done).await;
+    Json(id)
 }
 
-async fn delete_todo(
+async fn delete_todo<R: TodoRepo>(
     Path(id): Path<i64>,
-    State(TodoState{ pool }): State<TodoState>,
+    State(TodoState{ repo }): State<TodoState<R>>,
 ) -> Json<i64> {
-    let query = sqlx::query!(
-        "DELETE FROM todos where id = $1 RETURNING id",
-        id
-    );
-
-    let id = query.fetch_one(&pool).await.unwrap().id;
-    Json(id)
+    let deleted_id = repo.delete_todo(id).await;
+    Json(deleted_id)
 }
